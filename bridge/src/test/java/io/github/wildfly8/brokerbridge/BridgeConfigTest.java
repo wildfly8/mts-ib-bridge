@@ -23,6 +23,15 @@ class BridgeConfigTest {
 		assertEquals(1, c.marketDataType());
 		assertEquals(null, c.dataDir());
 		assertEquals(100_000, c.replayMax());
+		assertTrue(c.watchdog(), "the watchdog is on unless BRIDGE_WATCHDOG=off");
+	}
+
+	@Test
+	void onlyOffTurnsTheWatchdogOff() {
+		assertFalse(BridgeConfig.fromEnv(Map.of("BRIDGE_WATCHDOG", "off")).watchdog());
+		assertFalse(BridgeConfig.fromEnv(Map.of("BRIDGE_WATCHDOG", " OFF ")).watchdog());
+		assertTrue(BridgeConfig.fromEnv(Map.of("BRIDGE_WATCHDOG", "on")).watchdog());
+		assertTrue(BridgeConfig.fromEnv(Map.of("BRIDGE_WATCHDOG", "false")).watchdog(), "a typo does not switch the safety net off");
 	}
 
 	@Test

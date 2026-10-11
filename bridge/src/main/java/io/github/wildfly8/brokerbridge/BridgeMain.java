@@ -61,6 +61,16 @@ public final class BridgeMain {
 				config.marketDataType());
 		server.start();
 		connection.start();
+		if (config.watchdog()) {
+			// Runtime.halt, not System.exit: the shutdown hook below disconnects the IB client, which needs the monitor that is stuck
+			new Watchdog(client, connection, Duration.ofSeconds(15), Duration.ofSeconds(45), Duration.ofMinutes(5), reason -> {
+				log.error("The bridge ends itself so that its container restarts it. Threads:\n{}", ThreadDump.text());
+				System.err.flush();
+				Runtime.getRuntime().halt(70);
+			}).start();
+		} else {
+			log.warn("BRIDGE_WATCHDOG=off: a stuck connection will not restart the bridge");
+		}
 		Runtime.getRuntime().addShutdownHook(new Thread(() -> {
 			log.info("broker-bridge stopping");
 			connection.stop();

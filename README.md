@@ -44,7 +44,7 @@ docker build -t broker-bridge .              # or as a container
 docker run --rm --network host broker-bridge
 ```
 
-GitHub Actions (`.github/workflows/ci.yml`) builds and tests on every push and pull request (`mvn -B verify`, 49 tests) and
+GitHub Actions (`.github/workflows/ci.yml`) builds and tests on every push and pull request (`mvn -B verify`, 61 tests) and
 then builds the image, starts it without a Gateway and checks that `/v1/status` answers with orders refused.
 
 Bridge settings, independent of the broker:
@@ -55,6 +55,7 @@ Bridge settings, independent of the broker:
 | `BRIDGE_ORDERS_ENABLED` | `false` | only `true` (any case) lets orders through; `1` and `yes` do not |
 | `BRIDGE_DATA_DIR` | unset (image: `/data`) | journal of order events and order ids, so replay survives a restart |
 | `BRIDGE_REPLAY_MAX` | `100000` | order events kept for replay |
+| `BRIDGE_WATCHDOG` | `on` | `off` stops the bridge from ending itself when its connection machinery is stuck (see Behaviour) |
 | `LOG_LEVEL` | `info` | `trace`, `debug`, `info`, `warn` or `error` (logging is `slf4j-simple`) |
 
 Settings of the IB adapter. They keep their `IB_` names because they configure IB's own
@@ -119,7 +120,15 @@ keep working. Removing or renaming a field, or changing its meaning, needs `/v2`
 - One broker session (with the IB adapter: client id `IB_CLIENT_ID`). On disconnect (e.g. the Gateway's daily restart)
   it retries every 5 s, doubling up to 120 s, then re-sends active streaming subscriptions. A handshake the Gateway
   accepts and then drops (error 502 while it is restarting) waits that same backoff and does not connect again
-  immediately. Pending snapshot/history/resolve requests fail with 503 when the session drops.
+  immediately. The handshake itself is bounded (10 s to connect, 15 s for the Gateway's answer): a Gateway that
+  accepts the socket and says nothing is given up on. Pending snapshot/history/resolve requests fail with 503 when
+  the session drops.
+- **Watchdog.** IB's client holds its own lock while it reports a closed socket, so the connection loop never takes a
+  lock of its own while it asks the client (a loop that did deadlocked once, on 2026-10-07, and stayed down for three
+  days with the Gateway logged in; `IbConnectionLockTest` reproduces it). As a last defence a watchdog thread checks
+  every 15 s that the client answers within 45 s and that the connection loop has gone round within 5 minutes; if not,
+  it logs a thread dump (locks included) and ends the process (`Runtime.halt`, exit 70), so that the container's
+  restart policy starts a new bridge in seconds. `BRIDGE_WATCHDOG=off` turns it off.
 - Order ids: the caller's `clientOrderId` is mapped to the broker's order id inside the bridge; status, fills and order
   errors come back with the `clientOrderId`. With `BRIDGE_DATA_DIR` the mapping is journaled, so events for
   earlier orders still arrive after a bridge restart.
